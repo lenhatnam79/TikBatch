@@ -12,7 +12,7 @@ from dataclasses import replace
 import httpx
 
 from .download import Downloader
-from .model import DiskFull, ExpiredSource, NeedsLogin, SourceError, Throttled, Video, profile_url
+from .model import AccessDenied, DiskFull, ExpiredSource, NeedsLogin, SourceError, Throttled, Video, profile_url
 from .sources import Source
 from .store import Store
 from .locking import FileLock
@@ -74,13 +74,14 @@ class Engine:
         store.set("scan", "scanning")
         scan_error = ""
         fatal = ""
+        error_code = ""
         scan_done = False
         def add(v: Video):
             store.add(v)
             if v.seed.get("photo"):
                 store.unsupported(v.id)
         async def scan():
-            nonlocal scan_done, scan_error, fatal
+            nonlocal scan_done, scan_error, fatal, error_code
             try:
                 status = await source.scan(user, url, add)
                 store.set("scan", status)
@@ -91,8 +92,9 @@ class Engine:
                 scan_error = str(e) if isinstance(e, SourceError) else "Quét kênh gặp lỗi; chưa xác nhận hết danh sách."
                 store.set("scan", "incomplete")
                 self.emit("log", scan_error)
-                if isinstance(e, NeedsLogin):
+                if isinstance(e, (NeedsLogin, AccessDenied)):
                     fatal = scan_error
+                    error_code = "access_denied" if isinstance(e, AccessDenied) else "needs_login"
             finally:
                 scan_done = True
         def on_bytes(n):
@@ -108,7 +110,7 @@ class Engine:
             async with httpx.AsyncClient(limits=limits, timeout=httpx.Timeout(30, connect=15)) as client:
                 downloader = Downloader(client, on_bytes)
                 async def download(row):
-                    nonlocal fatal
+                    nonlocal fatal, error_code
                     try:
                         media = await source.resolve(row, fresh=row.get("error_code") == "expired")
                         cookies = None
@@ -137,9 +139,10 @@ class Engine:
                     except DiskFull as e:
                         store.reset(row["id"])
                         fatal = str(e)
-                    except NeedsLogin as e:
+                    except (NeedsLogin, AccessDenied) as e:
                         store.reset(row["id"])
                         fatal = str(e)
+                        error_code = "access_denied" if isinstance(e, AccessDenied) else "needs_login"
                     except Exception as e:
                         code = "source"
                         if isinstance(e, Throttled):
@@ -202,7 +205,7 @@ class Engine:
                 self.emit("log", "Cửa sổ trình duyệt đã đóng.")
             result = {**store.counts(), "scan": store.get("scan"), "folder": str(folder),
                       "seconds": time.monotonic() - started, "bytes": self.bytes,
-                      "stopped": self.stop.is_set(), "error": fatal or scan_error}
+                      "stopped": self.stop.is_set(), "error": fatal or scan_error, "error_code": error_code}
             store.export()
             (folder / "ket-qua.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             store.close()

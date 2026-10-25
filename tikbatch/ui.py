@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QFrame, QGr
 
 from .engine import Engine
 from .locking import FileLock
-from .model import data_dir, profile_url, worker_command
+from .model import SourceError, data_dir, profile_url, worker_command
 from .sources import browser_login
 
 
@@ -54,7 +54,9 @@ class Job(QThread):
             asyncio.run(self.execute())
         except Exception as e:
             # No raw network errors, URLs with query strings or browser diagnostics.
-            message = str(e) if isinstance(e, (ValueError, RuntimeError)) and len(str(e)) < 200 else "Tác vụ gặp lỗi. Hãy kiểm tra kết nối, thư mục và trạng thái trình duyệt."
+            message = (str(e) if isinstance(e, SourceError) or
+                       (isinstance(e, (ValueError, RuntimeError)) and len(str(e)) < 200)
+                       else "Tác vụ gặp lỗi. Hãy kiểm tra kết nối, thư mục và trạng thái trình duyệt.")
             self.event.emit("error", message)
 
     async def execute(self):
@@ -96,7 +98,7 @@ class Window(QMainWindow):
         self.job = None
         self.closing = False
         self.folder = None
-        self.setWindowTitle("TikBatch 0.2 · Tải video theo kênh")
+        self.setWindowTitle("TikBatch 0.2.1 · Tải video theo kênh")
         self.resize(1100, 820)
         self.setMinimumSize(920, 760)
         container = QWidget()
@@ -284,6 +286,8 @@ class Window(QMainWindow):
         elif kind == "finished":
             self.folder = Path(data["folder"])
             prefix = "Đã dừng, tiến độ được lưu" if data["stopped"] else "Đã kết thúc lượt chạy"
+            if data.get("error_code") == "access_denied":
+                prefix = "Đã tạm dừng do Access Denied, hàng đợi được giữ lại"
             scan = "nguồn báo hết danh sách" if data["scan"].startswith("source_end") else "CHƯA xác nhận hết kênh"
             message = f"{prefix}: {data['done']} đã lưu, {data['failed']} lỗi, {data['unsupported']} bài ảnh; {scan}."
             if data["error"]:

@@ -10,10 +10,25 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .model import Media, NeedsLogin, SourceError, Video, best_media, worker_command
+from .model import AccessDenied, Media, NeedsLogin, SourceError, Video, best_media, worker_command
 from .worker import options
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+
+def access_denial(status=None, title="", body=""):
+    """Return a safe diagnostic, without saving page contents or signed URLs."""
+    text = body.lower()
+    blocked = (status == 403 or
+               ("access denied" in (title + " " + body).lower() and
+                ("you don't have permission to access" in text or "errors.edgesuite.net" in text)))
+    if not blocked:
+        return None
+    match = re.search(r"\bReference\s*#\s*([A-Za-z0-9._-]{1,120})", body, re.IGNORECASE)
+    reference = f" Reference #{match[1]}." if match else ""
+    return AccessDenied("TikTok từ chối truy cập (Access Denied)." + reference +
+        " Đã tạm dừng và giữ hàng đợi. Kiểm tra cùng link bằng Chrome/Safari thông thường;"
+        " chỉ tiếp tục khi trang mở lại được. Đăng nhập lại chưa chắc khắc phục lỗi này.")
 
 
 def web_formats(item: dict) -> list[dict]:
@@ -274,8 +289,7 @@ class Source:
                     tasks.add(task)
                     task.add_done_callback(tasks.discard)
                 page.on("response", callback)
-                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                await self.check_auth(page)
+                await self.navigate(page, url, timeout=45000)
                 browser_ua = await page.evaluate("navigator.userAgent")
                 def deliver(v):
                     v.seed["headers"] = {"User-Agent": browser_ua, "Referer": "https://www.tiktok.com/"}
@@ -386,6 +400,7 @@ class Source:
             raise self._browser_failure
         if before_navigation:
             return
+        await self.check_access(page)
         needs_login = urlsplit(page.url).path.startswith("/login")
         captcha = page.locator('[id="captcha-verify-container"], iframe[src*="captcha"]')
         if await captcha.count() and await captcha.first.is_visible():
@@ -393,6 +408,36 @@ class Source:
         if needs_login:
             self._browser_failure = NeedsLogin("TikTok yêu cầu đăng nhập/xác minh. Đã tạm dừng; bấm Mở TikTok / Đăng nhập rồi tiếp tục.")
             raise self._browser_failure
+
+    async def check_access(self, page, status=None):
+        if self._browser_failure:
+            raise self._browser_failure
+        try:
+            title = await page.title()
+            body = ""
+            if status is not None or title.strip().lower() in {"access denied", "forbidden", "request rejected"}:
+                body = await page.evaluate("(document.body?.innerText || '').slice(0, 12000)")
+        except Exception:
+            title, body = "", ""
+        if denial := access_denial(status, title, body):
+            self._browser_failure = denial
+            raise denial
+
+    async def navigate(self, page, url, timeout=20000):
+        from playwright.async_api import Error as BrowserError
+        if self._browser_failure:
+            raise self._browser_failure
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        except BrowserError as e:
+            # Chromium can throw on a 403 navigation before returning a response.
+            await self.check_access(page)
+            code = re.search(r"net::ERR_[A-Z_]+", str(e))
+            label = code[0] if code else type(e).__name__
+            raise SourceError(f"Không tải được trang TikTok ({label}); kiểm tra truy cập bằng trình duyệt thông thường.") from e
+        await self.check_access(page, response.status if response else None)
+        await self.check_auth(page)
+        return response
 
     async def resolve_browser(self, url):
         vid = urlsplit(url).path.rstrip("/").split("/")[-1]
@@ -427,7 +472,7 @@ class Source:
                 task.add_done_callback(tasks.discard)
             page.on("response", callback)
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                await self.navigate(page, url)
                 ua = await page.evaluate("navigator.userAgent")
                 for _ in range(8):
                     await self.check_auth(page)
@@ -460,10 +505,25 @@ class Source:
         response = None
         try:
             response = await context.request.get(url, timeout=8000)
+            if response.status == 403:
+                self._browser_failure = access_denial(403, body=await response.text())
+                raise self._browser_failure
             if response.status != 200:
                 return None
-            item = item_from_html(await response.text(), vid)
+            html = await response.text()
+            # The request endpoint sometimes returns an error document with 200.
+            if not item_from_html(html, vid):
+                # Only visible text is used; do not scan JSON/video descriptions
+                # for block markers and confuse a post caption with an error.
+                plain = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.I | re.S)
+                visible = re.sub(r"<[^>]+>", " ", plain)
+                if denial := access_denial(200, body=visible):
+                    self._browser_failure = denial
+                    raise denial
+            item = item_from_html(html, vid)
             return best_media(web_formats(item), {"User-Agent": self._ua, "Referer": "https://www.tiktok.com/"})
+        except AccessDenied:
+            raise
         except Exception:
             return None
         finally:
@@ -497,7 +557,7 @@ async def browser_login(root: Path, url: str, emit, stop=None):
             headless=False, viewport={"width": 1280, "height": 900})
         try:
             page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            await source.navigate(page, url, timeout=45000)
             emit("log", "Bạn có thể đăng nhập/xác minh trong cửa sổ TikTok. Đóng cửa sổ khi xong.")
             while context.pages and not (stop and stop.is_set()):
                 try:

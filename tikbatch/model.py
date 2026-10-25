@@ -20,6 +20,10 @@ class NeedsLogin(SourceError):
     """Pause the run; never automatically open a visible browser."""
 
 
+class AccessDenied(SourceError):
+    """The site refused access; logging in again is not an established remedy."""
+
+
 class Throttled(SourceError):
     def __init__(self, delay: float = 30):
         self.delay = min(max(delay, 1), 3600)

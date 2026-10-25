@@ -41,3 +41,22 @@ def test_stopped_progress_does_not_claim_all_done(window):
     assert window.progress.maximum() == 10
     assert window.progress.value() == 2
     assert "Đã dừng" in window.status.text()
+
+
+def test_access_denied_status_explains_why_run_paused(window):
+    window.handle_event("finished", result(pending=8, error_code="access_denied", error="Access Denied"))
+    assert "Đã tạm dừng do Access Denied" in window.status.text()
+    assert "hàng đợi được giữ lại" in window.status.text()
+
+
+def test_login_denial_preserves_specific_error(window, monkeypatch):
+    from tikbatch.model import AccessDenied
+    from tikbatch.ui import Job
+    job = Job(window.root, "login", "https://www.tiktok.com/@example")
+    events = []
+    async def execute():
+        raise AccessDenied("TikTok từ chối truy cập (Access Denied).")
+    monkeypatch.setattr(job, "execute", execute)
+    job.event.connect(lambda kind, data: events.append((kind, data)))
+    job.run()
+    assert events == [("error", "TikTok từ chối truy cập (Access Denied).")]

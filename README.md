@@ -1,21 +1,23 @@
-# TikBatch 0.2 — chạy ngầm và tải song song
+# TikBatch 0.2.1 — chạy ngầm và phân biệt Access Denied
 
 Ứng dụng tải video theo kênh TikTok, chạy trên máy, không dùng API trả phí.
 
 **Mã nguồn:** [github.com/lenhatnam79/TikBatch](https://github.com/lenhatnam79/TikBatch). Bản 0.2 mặc định chạy Chromium ngầm, tái sử dụng tab, tăng mức song song và phân loại lỗi để tránh làm chậm toàn bộ hàng đợi. Chỉ nút **Mở TikTok / Đăng nhập** chủ động mở cửa sổ; nếu nguồn yêu cầu xác minh, lượt tải dừng và giữ hàng đợi.
 
-**Trạng thái:** 54 kiểm thử nội bộ đã qua. Chưa có benchmark chứng minh tốc độ Internet nhanh hơn hay tải hết kênh; phần nguồn TikTok vẫn phụ thuộc trạng thái truy cập và cần thử thực tế. Xem [báo cáo 0.2](BAO-CAO-0.2.md).
+**Trạng thái:** 65 kiểm thử nội bộ đã qua. Bản 0.2.1 nhận diện Access Denied riêng với đăng nhập/CAPTCHA và giữ hàng đợi khi bị từ chối truy cập. Bản sửa không cấp quyền truy cập mà máy chủ đang từ chối. Chưa có benchmark chứng minh tốc độ Internet nhanh hơn hay tải hết kênh. Xem [xử lý Access Denied](TIKTOK_ACCESS_DENIED.md) và [báo cáo 0.2](BAO-CAO-0.2.md).
 
 ## Cách chạy
 
 ### macOS Apple Silicon — bản ứng dụng kèm theo
 
-1. Giải nén `TikBatch-0.2-macOS-AppleSilicon.zip` và mở ứng dụng mới bên trong. Bản này kèm Python và thư viện; không cần cài Python riêng.
+1. Giải nén `TikBatch-0.2.1-macOS-AppleSilicon.zip` và mở ứng dụng mới bên trong. Bản này kèm Python và thư viện; không cần cài Python riêng.
 2. Chọn **Cài trình duyệt (lần đầu)** để tải Chromium miễn phí. Cần Internet.
 3. Giữ link mẫu hoặc nhập link kênh khác, chọn thư mục lưu rồi chọn **Bắt đầu / Tiếp tục**.
 4. Giữ **Chạy ngầm** bật. Nếu ứng dụng báo cần xác minh/đăng nhập, bấm **Mở TikTok / Đăng nhập**, hoàn tất rồi đóng cửa sổ và chọn **Bắt đầu / Tiếp tục**. Không cần mở trình duyệt liên tục khi tải.
 
 Nâng cấp từ 0.1: dừng và đóng app cũ trước; mở app 0.2, chọn đúng thư mục cha đã dùng trước đó. Hàng đợi cũ được nâng cấp tự động; file thành công được bỏ qua. Không xóa `.tikbatch.sqlite3` hay thư mục phiên đăng nhập.
+
+Nếu có **Access Denied**, kiểm tra cùng link bằng Chrome/Safari thông thường. Nếu cũng bị chặn, dừng tool và chờ truy cập thông thường hoạt động trở lại. Đăng nhập lại hoặc tăng số tác vụ tải chưa phải cách khắc phục đã được xác minh. Giữ mã Reference để cung cấp cho hỗ trợ TikTok nếu lỗi kéo dài.
 
 Bản ứng dụng chưa có chữ ký Developer ID/notarization. Nếu macOS chặn mở, xem nguồn gói và dùng mục Privacy & Security → Open Anyway nếu bạn quyết định cho phép. Không cần tắt Gatekeeper toàn hệ thống.
 
