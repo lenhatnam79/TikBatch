@@ -1,0 +1,100 @@
+# TikBatch 0.1 — bản thử nghiệm
+
+Ứng dụng tải video theo kênh TikTok, chạy trên máy, không dùng API trả phí.
+
+**Trạng thái:** giao diện, hàng đợi và bộ tải đã được kiểm thử nội bộ. Chưa xác minh thành công việc tải toàn bộ kênh `@hong_le_`, chất lượng cao nhất của kênh hoặc tình trạng logo trên video thật. Đây là bản thử nghiệm để tiếp tục kiểm chứng nguồn TikTok, chưa phải bản đã nghiệm thu yêu cầu tải hàng nghìn video thực tế.
+
+## Cách chạy
+
+### macOS Apple Silicon — bản ứng dụng kèm theo
+
+1. Giải nén `TikBatch-macOS-AppleSilicon.zip` và mở `TikBatch.app`. Bản này kèm Python và thư viện; không cần cài Python riêng.
+2. Chọn **Cài trình duyệt (lần đầu)** để tải Chromium miễn phí. Cần Internet.
+3. Giữ link mẫu hoặc nhập link kênh khác, chọn thư mục lưu rồi chọn **Bắt đầu / Tiếp tục**.
+4. Nếu TikTok yêu cầu xác minh/đăng nhập, hoàn tất trong cửa sổ TikTok. Có thể dùng nút **Mở TikTok / Đăng nhập** trước, đóng cửa sổ sau khi xong rồi chạy lại.
+
+Bản ứng dụng chưa có chữ ký Developer ID/notarization. Nếu macOS chặn mở, xem nguồn gói và dùng mục Privacy & Security → Open Anyway nếu bạn quyết định cho phép. Không cần tắt Gatekeeper toàn hệ thống.
+
+Mục tiêu bản kèm theo: macOS 13 trở lên, Apple Silicon. Đã kiểm tra khởi tạo giao diện bằng chế độ offscreen; chưa kiểm thử tương tác desktop đầy đủ. Mac Intel dùng mã nguồn hoặc build trên máy Intel.
+
+### Windows — chạy từ mã nguồn
+
+1. Cài **Python 3.12, 64-bit** từ [python.org](https://www.python.org/downloads/), gồm Python Launcher.
+2. Giải nén mã nguồn vào thư mục có quyền ghi và mở `Start-Windows.cmd`.
+3. Lần đầu, script tạo `.venv` và cài các thư viện miễn phí qua Internet.
+4. Trong ứng dụng, chọn **Cài trình duyệt (lần đầu)**, sau đó nhập kênh và thư mục.
+
+Chưa có file `.exe` Windows được build/kiểm thử trong lần bàn giao này. Bộ mã nguồn có script `build.py` và GitHub Actions để build trên Windows. Chưa chạy workflow hay đưa mã nguồn lên GitHub.
+
+### Chạy bằng Python trên hai hệ điều hành
+
+Yêu cầu Python 3.11 hoặc 3.12; khuyến nghị 3.12.
+
+```shell
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS: source .venv/bin/activate
+python -m pip install -e .
+python -m playwright install chromium
+python -m tikbatch
+```
+
+macOS có Python 3.12 cũng có thể mở `Start-macOS.command`. Chạy bằng terminal nếu cần xem lỗi cài đặt.
+
+CLI (từ mã nguồn):
+
+```shell
+python -m tikbatch --url "https://www.tiktok.com/@hong_le_" --output "/duong/dan/thu-muc" --max-concurrent 16
+```
+
+Trên Windows thay đường dẫn bằng dạng `D:\Videos`. CLI trả mã khác 0 nếu có lỗi tải hoặc chưa quét tới cuối nguồn; Ctrl+C lưu tiến độ rồi dừng.
+
+## Hành vi tải
+
+- Tạo thư mục con theo tên kênh trong thư mục bạn chọn.
+- Quét trực tiếp bằng yt-dlp trước; nếu không được, mở Chromium và dùng trang TikTok cùng phiên truy cập riêng của ứng dụng.
+- Vừa tìm danh sách vừa tải. Đường dẫn tải chỉ được chuẩn bị cho các video đang tới lượt, không chuẩn bị cả nghìn URL từ đầu.
+- Khởi đầu tối đa 4 tác vụ video, tự điều chỉnh trong giới hạn 1–16. Hai tác vụ lấy nguồn và một trang lấy chi tiết qua trình duyệt có thể chạy đồng thời trong giới hạn riêng.
+- Đánh giá thông lượng mỗi 10 giây; thử tăng mức song song khi có hàng chờ, giảm khi lỗi hoặc thêm kết nối không giúp tăng tốc. Đây là thuật toán ban đầu, chưa được tối ưu bằng benchmark TikTok thật.
+- Khi nguồn trả 429/503, tạm ngừng cấp tác vụ mới theo Retry-After; các file đang tải vẫn có thể tiếp tục. Tối đa 4 lần thử mỗi video trong một lượt chạy.
+- File tải dở dùng `.part`. Chỉ tiếp tục từ byte cũ khi có validator và HTTP Range khớp; nếu máy chủ không hỗ trợ, tải lại file đó.
+- Xác nhận số byte khi nguồn cung cấp độ dài; mở container, kiểm tra luồng hình/âm thanh, giải mã khung hình đầu và tính SHA-256 trước khi chốt file. Không giải mã toàn bộ video.
+- Giữ nguyên dữ liệu nguồn, không chuyển mã, không nâng độ phân giải, không xóa logo bằng crop hoặc AI.
+- Chọn nguồn MP4 phát trực tiếp phù hợp, loại nguồn bị đánh dấu watermark, nguồn download không rõ logo, video-only và codec bytevc2. Không có bộ phát hiện logo theo hình ảnh; nguồn playback vẫn cần đối chiếu mẫu thật.
+- “Chất lượng tốt nhất truy cập được” không đồng nghĩa với file gốc mà chủ kênh đã upload. Metadata nguồn và biến thể có thể thay đổi.
+- Chạy lại bỏ qua file đã thành công và còn đúng dung lượng. Không tính lại SHA-256 của tất cả file cũ mỗi lần chạy. Nếu file bị xóa/thay đổi dung lượng, đưa lại vào hàng đợi.
+- Bài ảnh được bỏ qua khi nhận diện được từ metadata; không tải livestream hoặc vượt quyền truy cập video riêng tư.
+
+## File và phiên đăng nhập
+
+Trong thư mục kênh:
+
+- `YYYYMMDD_VIDEOID.mp4` — video; ngày UTC, `19700101` nếu nguồn không cung cấp ngày.
+- `.tikbatch.sqlite3` — lịch sử, trạng thái, metadata; không xóa nếu muốn tiếp tục.
+- `.mp4.part` và `.mp4.part.json` — dữ liệu tải dở và thông tin tiếp tục.
+- `ket-qua.csv` — kết quả, kích thước, độ phân giải, SHA-256 và lỗi.
+
+Không tự ghi đè file đích có nội dung khác. Một khóa hệ điều hành ngăn hai tiến trình cùng sửa hàng đợi. Đổi tên tài khoản có thể tạo thư mục mới; bản này chưa tự hợp nhất lịch sử theo ID chủ kênh.
+
+Phiên Chromium và cookie chỉ lưu trên máy ở:
+
+- macOS: `~/Library/Application Support/TikBatch/`
+- Windows: `%LOCALAPPDATA%\TikBatch\`
+
+Đóng ứng dụng rồi xóa `browser/` và `cookies.txt` trong thư mục này nếu muốn xóa phiên đăng nhập. Không gửi các file này cho người khác. Ứng dụng không thu mật khẩu và không gửi cookie tới API dịch vụ download bên thứ ba; cookie TikTok được dùng cho yêu cầu tới TikTok. Không có telemetry của TikBatch.
+
+## Kiểm thử và build
+
+```shell
+python -m pip install -e ".[dev]"
+python -m pytest -q
+python build.py
+```
+
+PyInstaller cần build trên chính hệ điều hành đích; macOS cần Xcode Command Line Tools cho lipo/codesign. Kết quả ở `dist/`. Script không ký/notarize bản ứng dụng.
+
+`build_portable_mac.py` là phương án macOS không cần Xcode: dùng Python 3.12 từ [python-build-standalone](https://github.com/astral-sh/python-build-standalone), tạo venv từ runtime đó, cài dependencies rồi chạy script. Runtime và các thư viện được sao chép vào bundle cùng giấy phép trong metadata; không kèm Chromium, cookie hay lịch sử tải.
+
+Workflow `.github/workflows/build.yml` cung cấp các job Windows x64, macOS ARM64 và Intel. Cần đặt thư mục dự án làm gốc repository và chủ động chạy workflow; chưa có artifact Windows được phát hành.
+
+Xem `BAO-CAO.md` để biết kết quả và giới hạn kiểm thử của lần bàn giao.

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tikbatch"
+version = "0.1.0"
+description = "Local TikTok channel downloader for Windows and macOS"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "PySide6-Essentials==6.11.2", "httpx==0.28.1", "yt-dlp==2026.10.21",
+  "playwright==1.55.0", "curl-cffi==0.13.0", "av==13.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pyinstaller>=6.12"]
+
+[project.scripts]
+tikbatch = "tikbatch.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["tikbatch*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
