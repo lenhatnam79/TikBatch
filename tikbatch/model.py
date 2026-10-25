@@ -12,6 +12,14 @@ class SourceError(Exception):
     pass
 
 
+class ExpiredSource(SourceError):
+    """Refresh the signed media URL, rather than repeating a failed URL."""
+
+
+class NeedsLogin(SourceError):
+    """Pause the run; never automatically open a visible browser."""
+
+
 class Throttled(SourceError):
     def __init__(self, delay: float = 30):
         self.delay = min(max(delay, 1), 3600)
@@ -77,6 +85,7 @@ class Media:
     headers: dict = field(default_factory=dict)
     # Source field, not a claim that pixels were automatically checked.
     provenance: str = "playback"
+    fallback_urls: list[str] = field(default_factory=list)
 
 
 def best_media(formats: list[dict], headers: dict | None = None) -> Media:
@@ -103,7 +112,9 @@ def best_media(formats: list[dict], headers: dict | None = None) -> Media:
         w, h = f.get("width") or 0, f.get("height") or 0
         return (min(w, h), w * h, f.get("tbr") or 0, f.get("filesize") or 0)
     f = max(safe, key=rank)
+    identity = lambda x: (x.get("width"), x.get("height"), x.get("tbr"), x.get("vcodec"))
+    alternatives = list(dict.fromkeys(x["url"] for x in safe if identity(x) == identity(f) and x["url"] != f["url"]))
     return Media(f["url"], f.get("width") or 0, f.get("height") or 0,
                  f.get("tbr") or 0, f.get("filesize") or 0,
                  {**(headers or {}), **(f.get("http_headers") or {})},
-                 "TikTok playback; chưa kiểm tra logo trong hình ảnh")
+                 "TikTok playback; chưa kiểm tra logo trong hình ảnh", alternatives)

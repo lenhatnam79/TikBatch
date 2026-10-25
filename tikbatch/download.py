@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .model import DiskFull, Media, SourceError, Throttled
+from .model import DiskFull, ExpiredSource, Media, SourceError, Throttled
 
 
 def retry_after(value: str | None) -> float:
@@ -84,7 +84,7 @@ class Downloader:
                 if response.status_code in (429, 503):
                     raise Throttled(retry_after(response.headers.get("retry-after")))
                 if response.status_code in (401, 403, 410):
-                    raise SourceError("Đường dẫn nguồn hết hạn hoặc bị từ chối; cần lấy nguồn mới.")
+                    raise ExpiredSource("Đường dẫn nguồn hết hạn hoặc bị từ chối; cần lấy nguồn mới.")
                 if response.status_code == 416:
                     part.unlink(missing_ok=True)
                     sidecar.unlink(missing_ok=True)

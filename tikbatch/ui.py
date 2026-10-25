@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, QStandardPaths, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QGridLayout,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
@@ -42,10 +42,11 @@ QToolTip { background: #253640; color: white; border: 0; }
 class Job(QThread):
     event = Signal(str, object)
 
-    def __init__(self, root, mode, url, output=None, maximum=16):
+    def __init__(self, root, mode, url, output=None, maximum=16, headless=True):
         super().__init__()
         self.root, self.mode, self.url, self.output = root, mode, url, output
         self.maximum = maximum
+        self.headless = headless
         self.stop = threading.Event()
 
     def run(self):
@@ -59,7 +60,7 @@ class Job(QThread):
     async def execute(self):
         emit = self.event.emit
         if self.mode == "download":
-            await Engine(self.root, emit, self.stop, self.maximum).run(self.url, self.output)
+            await Engine(self.root, emit, self.stop, self.maximum, headless=self.headless).run(self.url, self.output)
         elif self.mode == "login":
             with FileLock(self.root / ".session.lock"):
                 await browser_login(self.root, self.url, emit, self.stop)
@@ -95,7 +96,7 @@ class Window(QMainWindow):
         self.job = None
         self.closing = False
         self.folder = None
-        self.setWindowTitle("TikBatch · Tải video theo kênh")
+        self.setWindowTitle("TikBatch 0.2 · Tải video theo kênh")
         self.resize(1100, 820)
         self.setMinimumSize(920, 760)
         container = QWidget()
@@ -129,15 +130,18 @@ class Window(QMainWindow):
         self.browse.clicked.connect(self.choose)
         grid.addWidget(self.browse, 3, 2)
         self.maximum = QSpinBox()
-        self.maximum.setRange(1, 16)
+        self.maximum.setRange(1, 32)
         self.maximum.setValue(int(self.settings.value("maximum", 16)))
         self.maximum.setPrefix("Tối đa ")
         self.maximum.setSuffix(" video đồng thời")
-        self.maximum.setToolTip("Bắt đầu tối đa 4, sau đó tự điều chỉnh theo tốc độ và lỗi.")
+        self.maximum.setToolTip("Bắt đầu tối đa 8, sau đó tự điều chỉnh theo tốc độ mạng. Tối đa 32 video; lấy nguồn có giới hạn riêng.")
         grid.addWidget(self.maximum, 4, 0)
         quality = QLabel("Nguồn phát tốt nhất truy cập được · MP4 + âm thanh")
         quality.setObjectName("muted")
         grid.addWidget(quality, 4, 1, 1, 2)
+        self.background = QCheckBox("Chạy ngầm — không mở cửa sổ TikTok khi tải")
+        self.background.setChecked(self.settings.value("headless", True, type=bool))
+        grid.addWidget(self.background, 5, 0, 1, 3)
         grid.setColumnStretch(1, 1)
         layout.addWidget(form)
         buttons = QHBoxLayout()
@@ -226,9 +230,10 @@ class Window(QMainWindow):
         except (ValueError, OSError) as e:
             QMessageBox.warning(self, "Kiểm tra thông tin", str(e))
             return
-        for key, value in {"url": url, "output": str(output), "maximum": self.maximum.value()}.items():
+        for key, value in {"url": url, "output": str(output), "maximum": self.maximum.value(),
+                           "headless": self.background.isChecked()}.items():
             self.settings.setValue(key, value)
-        self.job = Job(self.root, mode, url, output, self.maximum.value())
+        self.job = Job(self.root, mode, url, output, self.maximum.value(), self.background.isChecked())
         self.job.event.connect(self.handle_event)
         self.job.finished.connect(self.idle)
         self.busy(True)
@@ -237,7 +242,7 @@ class Window(QMainWindow):
         self.job.start()
 
     def busy(self, yes):
-        for widget in [self.start, self.install, self.login, self.url, self.output, self.browse, self.maximum]:
+        for widget in [self.start, self.install, self.login, self.url, self.output, self.browse, self.maximum, self.background]:
             widget.setEnabled(not yes)
         self.pause.setEnabled(yes)
 

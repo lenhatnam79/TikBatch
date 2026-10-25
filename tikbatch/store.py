@@ -27,6 +27,9 @@ class Store:
             CREATE INDEX IF NOT EXISTS queue ON videos(state,ready);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
         """)
+        columns = {r[1] for r in self.db.execute("PRAGMA table_info(videos)")}
+        if "error_code" not in columns:
+            self.db.execute("ALTER TABLE videos ADD COLUMN error_code TEXT NOT NULL DEFAULT ''")
         self.db.execute("UPDATE videos SET state='pending' WHERE state='active'")
         self.db.commit()
 
@@ -41,9 +44,16 @@ class Store:
     def add(self, v: Video):
         if not v.id.isdigit():
             return
+        old = self.db.execute("SELECT seed FROM videos WHERE id=?", (v.id,)).fetchone()
+        seed = v.seed
+        # DOM links and flat listings must not erase richer API metadata.
+        if old and not seed.get("item"):
+            seed = json.loads(old["seed"] or "{}")
         self.db.execute("""INSERT INTO videos(id,url,title,timestamp,seed) VALUES (?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET seed=excluded.seed, title=excluded.title""",
-            (v.id, v.url, v.title, v.timestamp, json.dumps(v.seed, ensure_ascii=False)))
+            ON CONFLICT(id) DO UPDATE SET seed=excluded.seed,
+            title=CASE WHEN excluded.title!='' THEN excluded.title ELSE videos.title END,
+            timestamp=CASE WHEN excluded.timestamp>0 THEN excluded.timestamp ELSE videos.timestamp END""",
+            (v.id, v.url, v.title, v.timestamp, json.dumps(seed, ensure_ascii=False)))
         self.db.commit()
 
     def reconcile(self):
@@ -67,13 +77,13 @@ class Store:
         self.db.execute("UPDATE videos SET state='pending',attempts=max(0,attempts-1) WHERE id=?", (id,))
         self.db.commit()
 
-    def fail(self, id: str, error: str, delay: float, max_attempts: int = 4):
+    def fail(self, id: str, error: str, delay: float, max_attempts: int = 4, code: str = "source"):
         self.db.execute("""UPDATE videos SET state=CASE WHEN attempts>=? THEN 'failed' ELSE 'pending' END,
-            error=?,ready=? WHERE id=?""", (max_attempts, error, time.time() + delay, id))
+            error=?,ready=?,error_code=? WHERE id=?""", (max_attempts, error, time.time() + delay, code, id))
         self.db.commit()
 
     def done(self, id: str, result: dict):
-        self.db.execute("""UPDATE videos SET state='done',error='',filename=?,bytes=?,sha256=?,
+        self.db.execute("""UPDATE videos SET state='done',error='',error_code='',filename=?,bytes=?,sha256=?,
             width=?,height=?,provenance=? WHERE id=?""",
             (result["filename"], result["bytes"], result["sha256"], result["width"], result["height"], result["provenance"], id))
         self.db.commit()

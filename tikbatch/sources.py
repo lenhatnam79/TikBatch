@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 import http.cookiejar
 import json
-import os
 import re
-import threading
 import time
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .model import Media, SourceError, Video, best_media, worker_command
+from .model import Media, NeedsLogin, SourceError, Video, best_media, worker_command
 from .worker import options
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
@@ -26,7 +25,7 @@ def web_formats(item: dict) -> list[dict]:
         elif isinstance(value, list):
             urls = [v.get("src", "") if isinstance(v, dict) else v for v in value]
         elif isinstance(value, dict):
-            urls = value.get("UrlList") or value.get("urlList") or value.get("url_list") or []
+            urls = value.get("UrlList") or value.get("urlList") or value.get("url_list") or value.get("src") or value.get("url") or []
             if isinstance(urls, str):
                 urls = [urls]
             size = value.get("DataSize") or size
@@ -35,6 +34,8 @@ def web_formats(item: dict) -> list[dict]:
         for url in urls:
             if not isinstance(url, str):
                 continue
+            if url.startswith("//"):
+                url = "https:" + url
             # TikTok has video-only HVC1 variants; require a muxed source.
             if urlsplit(url).path.endswith("/media-video-hvc1/"):
                 continue
@@ -43,6 +44,10 @@ def web_formats(item: dict) -> list[dict]:
                             "format_id": "play", "_tikbatch_playback": True})
     w, h = int(video.get("width") or 0), int(video.get("height") or 0)
     add(video.get("playAddr"), w, h)
+    add(video.get("PlayAddrStruct"), w, h, (video.get("bitrate") or 0) / 1000)
+    add(video.get("play_addr"), w, h)
+    add(video.get("play_addr_h264"), w, h)
+    add(video.get("play_addr_bytevc1"), w, h, codec="h265")
     for item in video.get("bitrateInfo") or []:
         addr = item.get("PlayAddr") or {}
         key = addr.get("UrlKey", "")
@@ -56,6 +61,69 @@ def web_formats(item: dict) -> list[dict]:
         add(addr, width, height, (item.get("Bitrate") or 0) / 1000, codec)
     # downloadAddr is deliberately excluded: it is commonly watermarked.
     return formats
+
+
+def item_from_json(data: dict, vid: str) -> dict:
+    scope = data.get("__DEFAULT_SCOPE__", {})
+    candidates = [scope.get("webapp.video-detail", {}).get("itemInfo", {}).get("itemStruct"),
+                  data.get("ItemModule", {}).get(vid), data.get("itemInfo", {}).get("itemStruct"),
+                  data.get("itemStruct"), data.get("data", {}).get("itemInfo", {}).get("itemStruct")]
+    return next((v for v in candidates if isinstance(v, dict) and str(v.get("id")) == vid), {})
+
+
+class _PageData(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.inside = False
+        self.parts = []
+        self.current = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script" and dict(attrs).get("id") in {"__UNIVERSAL_DATA_FOR_REHYDRATION__", "SIGI_STATE"}:
+            self.inside = True
+            self.current = []
+
+    def handle_data(self, data):
+        if self.inside:
+            self.current.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self.inside:
+            self.parts.append("".join(self.current))
+            self.inside = False
+
+
+def item_from_html(html: str, vid: str) -> dict:
+    parser = _PageData()
+    parser.feed(html)
+    for text in parser.parts:
+        try:
+            if item := item_from_json(json.loads(text), vid):
+                return item
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return {}
+
+
+def usable_cached_media(seed: dict, now=None):
+    now = time.time() if now is None else now
+    media = best_media(web_formats(seed.get("item", {})), seed.get("headers") or {"User-Agent": UA, "Referer": "https://www.tiktok.com/"})
+    query = parse_qs(urlsplit(media.url).query)
+    expiries = []
+    for name in ("x-expires", "expires", "expire"):
+        try:
+            value = float(query[name][0])
+            if value > 1e12:
+                value /= 1000
+            expiries.append(value)
+        except (KeyError, ValueError, TypeError):
+            pass
+    if expiries:
+        if min(expiries) <= now + 30:
+            raise SourceError("Nguồn trong bộ nhớ đã hết hạn.")
+    elif now - seed.get("fetched", 0) > 1800:
+        raise SourceError("Cần làm mới nguồn trong bộ nhớ.")
+    return media
 
 
 def browser_video(item: dict, user: str) -> Video | None:
@@ -73,33 +141,67 @@ def browser_video(item: dict, user: str) -> Video | None:
 
 
 class Source:
-    def __init__(self, root: Path, emit):
+    def __init__(self, root: Path, emit, *, headless=True, max_resolvers=8, browser_workers=4):
         self.root, self.emit = root, emit
         self.cookiefile = root / "cookies.txt"
-        self._local = threading.local()
-        self.resolvers = asyncio.Semaphore(2)
+        self.headless = headless
+        self.resolvers = asyncio.Semaphore(max_resolvers)
         self.process = None
         self._playwright = None
         self._browser = None
         self._browser_lock = asyncio.Lock()
-        self._detail_limit = asyncio.Semaphore(1)
+        self._detail_limit = asyncio.Semaphore(browser_workers)
+        self._pages = asyncio.Queue()
+        self._browser_failure = None
+        self._prefer_browser = False
+        self._http_details_usable = None
+        self._http_probe_lock = asyncio.Lock()
+        self._ua = UA
 
     @asynccontextmanager
     async def browser_session(self):
         from playwright.async_api import async_playwright
         async with self._browser_lock:
+            if self._browser_failure:
+                raise self._browser_failure
             if self._browser is None:
                 try:
                     self._playwright = await async_playwright().start()
                     self._browser = await self._playwright.chromium.launch_persistent_context(
-                        str(self.root / "browser"), headless=os.environ.get("TIKBATCH_HEADLESS") == "1",
+                        str(self.root / "browser"), headless=self.headless, channel="chromium",
                         viewport={"width": 1440, "height": 960})
+                    # Metadata is required, rendered media is not. This does not
+                    # block the JS/fetch requests used to populate the channel.
+                    async def filter_assets(route):
+                        if route.request.resource_type in {"image", "media", "font"}:
+                            await route.abort()
+                        else:
+                            await route.continue_()
+                    await self._browser.route("**/*", filter_assets)
+                    if self._browser.pages:
+                        self._ua = await self._browser.pages[0].evaluate("navigator.userAgent")
                 except Exception as e:
                     if self._playwright:
                         await self._playwright.stop()
                         self._playwright = None
-                    raise SourceError("Không mở được Chromium. Bấm ‘Cài trình duyệt’, hoặc đóng cửa sổ đăng nhập đang mở.") from e
+                    self._browser_failure = NeedsLogin("Không mở được Chromium chạy ngầm. Kiểm tra cài trình duyệt và đóng phiên đăng nhập đang mở; hàng đợi được giữ lại.")
+                    raise self._browser_failure from e
         yield self._browser
+
+    @asynccontextmanager
+    async def detail_page(self):
+        async with self._detail_limit, self.browser_session() as context:
+            try:
+                page = self._pages.get_nowait()
+            except asyncio.QueueEmpty:
+                page = await context.new_page()
+            try:
+                if page.is_closed():
+                    page = await context.new_page()
+                yield page
+            finally:
+                if not page.is_closed():
+                    self._pages.put_nowait(page)
 
     async def close(self):
         if self._browser:
@@ -144,7 +246,8 @@ class Source:
             await self.scan_direct(url, on_video)
             return "source_end:yt-dlp"
         except (SourceError, asyncio.TimeoutError, ValueError):
-            self.emit("log", "Quét trực tiếp chưa được. Đang mở cửa sổ TikTok; bạn có thể hoàn tất xác minh/đăng nhập nếu được yêu cầu…")
+            self._prefer_browser = True
+            self.emit("log", "Quét trực tiếp chưa được. Chuyển sang trình duyệt chạy ngầm; chỉ mở cửa sổ đăng nhập khi bạn bấm nút.")
         return await self.scan_browser(user, url, on_video)
 
     async def scan_browser(self, user: str, url: str, on_video):
@@ -152,8 +255,10 @@ class Source:
         events = asyncio.Queue(maxsize=100)
         tasks = set()
         async with self.browser_session() as context:
+            page = None
             try:
                 page = await context.new_page()
+                await self.check_auth(page, before_navigation=True)
                 async def capture(response):
                     path = urlsplit(response.url).path
                     if path not in ("/api/post/item_list/", "/api/creator/item_list/"):
@@ -170,6 +275,7 @@ class Source:
                     task.add_done_callback(tasks.discard)
                 page.on("response", callback)
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                await self.check_auth(page)
                 browser_ua = await page.evaluate("navigator.userAgent")
                 def deliver(v):
                     v.seed["headers"] = {"User-Agent": browser_ua, "Referer": "https://www.tiktok.com/"}
@@ -220,6 +326,7 @@ class Source:
                         cursor = data.get("cursor")
                         if cursor is not None:
                             cursors.add(str(cursor))
+                    await self.check_auth(page)
                     await self.save_cookies(context)
                     if terminal:
                         return "source_end:browser"
@@ -234,14 +341,15 @@ class Source:
                             last_new = time.monotonic()
                     await page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
                     await asyncio.sleep(1.2)
-                raise SourceError("Quét bị gián đoạn hoặc TikTok yêu cầu xác minh. Hãy mở TikTok/đăng nhập rồi thử lại; chưa xác nhận đã hết kênh.")
+                raise SourceError("Quét bị gián đoạn; chưa xác nhận hết kênh. Có thể cần dùng nút Mở TikTok / Đăng nhập rồi tiếp tục.")
             except BrowserError as e:
                 raise SourceError("Không đọc được trang TikTok trong trình duyệt; hãy mở TikTok để kiểm tra kết nối/đăng nhập.") from e
             finally:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*list(tasks), return_exceptions=True)
-                await page.close()
+                if page and not page.is_closed():
+                    await page.close()
 
     async def save_cookies(self, context):
         cookies = await context.cookies()
@@ -260,33 +368,107 @@ class Source:
 
     async def resolve(self, row: dict, fresh: bool = False) -> Media:
         seed = json.loads(row.get("seed") or "{}")
-        if not fresh and time.time() - seed.get("fetched", 0) < 600:
+        if not fresh:
             try:
-                return best_media(web_formats(seed.get("item", {})), seed.get("headers") or {"User-Agent": UA, "Referer": "https://www.tiktok.com/"})
+                return usable_cached_media(seed)
             except SourceError:
                 pass
         async with self.resolvers:
+            if self._prefer_browser or seed.get("item"):
+                return await self.resolve_browser(row["url"])
             try:
                 return await asyncio.to_thread(self._resolve_sync, row["url"])
             except SourceError:
                 return await self.resolve_browser(row["url"])
 
+    async def check_auth(self, page, before_navigation=False):
+        if self._browser_failure:
+            raise self._browser_failure
+        if before_navigation:
+            return
+        needs_login = urlsplit(page.url).path.startswith("/login")
+        captcha = page.locator('[id="captcha-verify-container"], iframe[src*="captcha"]')
+        if await captcha.count() and await captcha.first.is_visible():
+            needs_login = True
+        if needs_login:
+            self._browser_failure = NeedsLogin("TikTok yêu cầu đăng nhập/xác minh. Đã tạm dừng; bấm Mở TikTok / Đăng nhập rồi tiếp tục.")
+            raise self._browser_failure
+
     async def resolve_browser(self, url):
-        async with self._detail_limit, self.browser_session() as context:
-            page = await context.new_page()
+        vid = urlsplit(url).path.rstrip("/").split("/")[-1]
+        # Cheap HTML lookup shares this browser session's cookies. Probe once;
+        # stop trying this route when TikTok requires page JavaScript instead.
+        async with self.browser_session() as context:
+            if self._http_details_usable is None:
+                async with self._http_probe_lock:
+                    if self._http_details_usable is None:
+                        self._http_details_usable = False
+                        if media := await self._resolve_http(context, url, vid):
+                            self._http_details_usable = True
+                            return media
+            elif self._http_details_usable:
+                if media := await self._resolve_http(context, url, vid):
+                    return media
+        async with self.detail_page() as page:
+            captured = []
+            tasks = set()
+            async def capture(response):
+                if "/api/item/detail" not in urlsplit(response.url).path:
+                    return
+                try:
+                    item = item_from_json(await response.json(), vid)
+                    if item:
+                        captured.append(item)
+                except Exception:
+                    pass
+            def callback(response):
+                task = asyncio.create_task(capture(response))
+                tasks.add(task)
+                task.add_done_callback(tasks.discard)
+            page.on("response", callback)
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                data = await page.locator("script#__UNIVERSAL_DATA_FOR_REHYDRATION__").text_content(timeout=10000)
-                scope = json.loads(data or "{}").get("__DEFAULT_SCOPE__", {})
-                item = scope.get("webapp.video-detail", {}).get("itemInfo", {}).get("itemStruct", {})
+                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 ua = await page.evaluate("navigator.userAgent")
-                return best_media(web_formats(item), {"User-Agent": ua, "Referer": "https://www.tiktok.com/"})
+                for _ in range(8):
+                    await self.check_auth(page)
+                    scripts = await page.locator("script#__UNIVERSAL_DATA_FOR_REHYDRATION__, script#SIGI_STATE").all_text_contents()
+                    items = list(captured)
+                    for script in scripts:
+                        try:
+                            items.append(item_from_json(json.loads(script), vid))
+                        except (ValueError, AttributeError, TypeError):
+                            pass
+                    for item in items:
+                        try:
+                            return best_media(web_formats(item), {"User-Agent": ua, "Referer": "https://www.tiktok.com/"})
+                        except SourceError:
+                            continue
+                    await asyncio.sleep(.4)
+                raise SourceError("Trang video chưa cung cấp nguồn phát phù hợp; có thể là video hạn chế hoặc dữ liệu nguồn đã thay đổi.")
             except SourceError:
                 raise
             except Exception as e:
-                raise SourceError("Không lấy được nguồn phát qua trình duyệt; hãy kiểm tra đăng nhập hoặc trạng thái video.") from e
+                raise SourceError("Không đọc được nguồn phát trong thời gian chờ; sẽ thử lại có giới hạn.") from e
             finally:
-                await page.close()
+                page.remove_listener("response", callback)
+                active = list(tasks)
+                for task in active:
+                    task.cancel()
+                await asyncio.gather(*active, return_exceptions=True)
+
+    async def _resolve_http(self, context, url, vid):
+        response = None
+        try:
+            response = await context.request.get(url, timeout=8000)
+            if response.status != 200:
+                return None
+            item = item_from_html(await response.text(), vid)
+            return best_media(web_formats(item), {"User-Agent": self._ua, "Referer": "https://www.tiktok.com/"})
+        except Exception:
+            return None
+        finally:
+            if response:
+                await response.dispose()
 
     def _resolve_sync(self, url):
         import yt_dlp

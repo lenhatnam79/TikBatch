@@ -8,6 +8,7 @@ import plistlib
 import shutil
 import sys
 from pathlib import Path
+from tikbatch import __version__
 
 
 def main():
@@ -54,8 +55,8 @@ def main():
     with (app / "Contents" / "Info.plist").open("wb") as file:
         plistlib.dump({"CFBundleName": "TikBatch", "CFBundleDisplayName": "TikBatch",
             "CFBundleIdentifier": "local.tikbatch.desktop", "CFBundleExecutable": "TikBatch",
-            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",
-            "CFBundleVersion": "1", "LSMinimumSystemVersion": "13.0",
+            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": __version__,
+            "CFBundleVersion": __version__, "LSMinimumSystemVersion": "13.0",
             "NSHighResolutionCapable": True}, file)
     print(app)
 

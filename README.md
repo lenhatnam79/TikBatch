@@ -1,17 +1,21 @@
-# TikBatch 0.1 — bản thử nghiệm
+# TikBatch 0.2 — chạy ngầm và tải song song
 
 Ứng dụng tải video theo kênh TikTok, chạy trên máy, không dùng API trả phí.
 
-**Trạng thái:** giao diện, hàng đợi và bộ tải đã được kiểm thử nội bộ. Chưa xác minh thành công việc tải toàn bộ kênh `@hong_le_`, chất lượng cao nhất của kênh hoặc tình trạng logo trên video thật. Đây là bản thử nghiệm để tiếp tục kiểm chứng nguồn TikTok, chưa phải bản đã nghiệm thu yêu cầu tải hàng nghìn video thực tế.
+**Mã nguồn:** [github.com/lenhatnam79/TikBatch](https://github.com/lenhatnam79/TikBatch). Bản 0.2 mặc định chạy Chromium ngầm, tái sử dụng tab, tăng mức song song và phân loại lỗi để tránh làm chậm toàn bộ hàng đợi. Chỉ nút **Mở TikTok / Đăng nhập** chủ động mở cửa sổ; nếu nguồn yêu cầu xác minh, lượt tải dừng và giữ hàng đợi.
+
+**Trạng thái:** 54 kiểm thử nội bộ đã qua. Chưa có benchmark chứng minh tốc độ Internet nhanh hơn hay tải hết kênh; phần nguồn TikTok vẫn phụ thuộc trạng thái truy cập và cần thử thực tế. Xem [báo cáo 0.2](BAO-CAO-0.2.md).
 
 ## Cách chạy
 
 ### macOS Apple Silicon — bản ứng dụng kèm theo
 
-1. Giải nén `TikBatch-macOS-AppleSilicon.zip` và mở `TikBatch.app`. Bản này kèm Python và thư viện; không cần cài Python riêng.
+1. Giải nén `TikBatch-0.2-macOS-AppleSilicon.zip` và mở ứng dụng mới bên trong. Bản này kèm Python và thư viện; không cần cài Python riêng.
 2. Chọn **Cài trình duyệt (lần đầu)** để tải Chromium miễn phí. Cần Internet.
 3. Giữ link mẫu hoặc nhập link kênh khác, chọn thư mục lưu rồi chọn **Bắt đầu / Tiếp tục**.
-4. Nếu TikTok yêu cầu xác minh/đăng nhập, hoàn tất trong cửa sổ TikTok. Có thể dùng nút **Mở TikTok / Đăng nhập** trước, đóng cửa sổ sau khi xong rồi chạy lại.
+4. Giữ **Chạy ngầm** bật. Nếu ứng dụng báo cần xác minh/đăng nhập, bấm **Mở TikTok / Đăng nhập**, hoàn tất rồi đóng cửa sổ và chọn **Bắt đầu / Tiếp tục**. Không cần mở trình duyệt liên tục khi tải.
+
+Nâng cấp từ 0.1: dừng và đóng app cũ trước; mở app 0.2, chọn đúng thư mục cha đã dùng trước đó. Hàng đợi cũ được nâng cấp tự động; file thành công được bỏ qua. Không xóa `.tikbatch.sqlite3` hay thư mục phiên đăng nhập.
 
 Bản ứng dụng chưa có chữ ký Developer ID/notarization. Nếu macOS chặn mở, xem nguồn gói và dùng mục Privacy & Security → Open Anyway nếu bạn quyết định cho phép. Không cần tắt Gatekeeper toàn hệ thống.
 
@@ -24,7 +28,7 @@ Mục tiêu bản kèm theo: macOS 13 trở lên, Apple Silicon. Đã kiểm tra
 3. Lần đầu, script tạo `.venv` và cài các thư viện miễn phí qua Internet.
 4. Trong ứng dụng, chọn **Cài trình duyệt (lần đầu)**, sau đó nhập kênh và thư mục.
 
-Chưa có file `.exe` Windows được build/kiểm thử trong lần bàn giao này. Bộ mã nguồn có script `build.py` và GitHub Actions để build trên Windows. Chưa chạy workflow hay đưa mã nguồn lên GitHub.
+GitHub Actions tự kiểm thử và build khi có commit trên `main`. Khi job Windows thành công, tải artifact trong [Actions](https://github.com/lenhatnam79/TikBatch/actions), giải nén ZIP bên trong và mở `TikBatch.exe`. Kết quả job cụ thể được ghi trong báo cáo bàn giao; có workflow không đồng nghĩa build đã thành công.
 
 ### Chạy bằng Python trên hai hệ điều hành
 
@@ -49,13 +53,19 @@ python -m tikbatch --url "https://www.tiktok.com/@hong_le_" --output "/duong/dan
 
 Trên Windows thay đường dẫn bằng dạng `D:\Videos`. CLI trả mã khác 0 nếu có lỗi tải hoặc chưa quét tới cuối nguồn; Ctrl+C lưu tiến độ rồi dừng.
 
+CLI mặc định chạy ngầm. Chỉ thêm `--show-browser` khi muốn chủ động hiện cửa sổ để chẩn đoán. Mức `--max-concurrent` hỗ trợ 1–32.
+
 ## Hành vi tải
 
 - Tạo thư mục con theo tên kênh trong thư mục bạn chọn.
-- Quét trực tiếp bằng yt-dlp trước; nếu không được, mở Chromium và dùng trang TikTok cùng phiên truy cập riêng của ứng dụng.
+- Quét trực tiếp bằng yt-dlp trước; nếu không được, dùng Chromium chạy ngầm với phiên truy cập riêng của ứng dụng. Không tự chuyển sang cửa sổ hiển thị khi lỗi.
 - Vừa tìm danh sách vừa tải. Đường dẫn tải chỉ được chuẩn bị cho các video đang tới lượt, không chuẩn bị cả nghìn URL từ đầu.
-- Khởi đầu tối đa 4 tác vụ video, tự điều chỉnh trong giới hạn 1–16. Hai tác vụ lấy nguồn và một trang lấy chi tiết qua trình duyệt có thể chạy đồng thời trong giới hạn riêng.
-- Đánh giá thông lượng mỗi 10 giây; thử tăng mức song song khi có hàng chờ, giảm khi lỗi hoặc thêm kết nối không giúp tăng tốc. Đây là thuật toán ban đầu, chưa được tối ưu bằng benchmark TikTok thật.
+- Khởi đầu tối đa 8 tác vụ video, tự điều chỉnh trong giới hạn người dùng chọn (1–32, mặc định 16). Tối đa 8 tác vụ lấy nguồn và 4 tab ngầm lấy chi tiết; các giới hạn nhỏ hơn được áp dụng nếu người dùng chọn ít tác vụ hơn.
+- Một browser context được tái sử dụng cho cả lượt chạy. Nhóm tab chi tiết được tái sử dụng; không tạo cửa sổ mới theo từng video. Không tải hình/âm thanh phát trực tiếp, ảnh hoặc font trong quá trình lấy metadata.
+- Thử lấy HTML dùng chung cookie trước; nếu không có dữ liệu phù hợp, bỏ đường này và dùng nhóm tab. Hỗ trợ cả universal data và SIGI_STATE, PlayAddrStruct và URL nguồn dự phòng có cùng thông số chất lượng.
+- Đánh giá thông lượng mỗi 10 giây; lỗi mạng/giới hạn nguồn làm giảm mức song song, lỗi metadata của một video không làm giảm toàn bộ hàng đợi. Chưa được tối ưu bằng benchmark TikTok thật.
+- Lỗi mạng dùng lại nguồn còn hạn. Lỗi URL bị từ chối thử CDN tương đương rồi làm mới nguồn ngay một lần trong tác vụ, không mặc định mở lại trang ở mọi lần thử.
+- Nguồn có thời hạn ký còn hợp lệ được giữ tới gần thời điểm hết hạn; nguồn không có thông tin hết hạn dùng cache tối đa 30 phút.
 - Khi nguồn trả 429/503, tạm ngừng cấp tác vụ mới theo Retry-After; các file đang tải vẫn có thể tiếp tục. Tối đa 4 lần thử mỗi video trong một lượt chạy.
 - File tải dở dùng `.part`. Chỉ tiếp tục từ byte cũ khi có validator và HTTP Range khớp; nếu máy chủ không hỗ trợ, tải lại file đó.
 - Xác nhận số byte khi nguồn cung cấp độ dài; mở container, kiểm tra luồng hình/âm thanh, giải mã khung hình đầu và tính SHA-256 trước khi chốt file. Không giải mã toàn bộ video.
@@ -73,6 +83,7 @@ Trong thư mục kênh:
 - `.tikbatch.sqlite3` — lịch sử, trạng thái, metadata; không xóa nếu muốn tiếp tục.
 - `.mp4.part` và `.mp4.part.json` — dữ liệu tải dở và thông tin tiếp tục.
 - `ket-qua.csv` — kết quả, kích thước, độ phân giải, SHA-256 và lỗi.
+- `ket-qua.json` — trạng thái cả lượt chạy, lý do dừng và trạng thái quét kênh.
 
 Không tự ghi đè file đích có nội dung khác. Một khóa hệ điều hành ngăn hai tiến trình cùng sửa hàng đợi. Đổi tên tài khoản có thể tạo thư mục mới; bản này chưa tự hợp nhất lịch sử theo ID chủ kênh.
 
@@ -95,6 +106,6 @@ PyInstaller cần build trên chính hệ điều hành đích; macOS cần Xcod
 
 `build_portable_mac.py` là phương án macOS không cần Xcode: dùng Python 3.12 từ [python-build-standalone](https://github.com/astral-sh/python-build-standalone), tạo venv từ runtime đó, cài dependencies rồi chạy script. Runtime và các thư viện được sao chép vào bundle cùng giấy phép trong metadata; không kèm Chromium, cookie hay lịch sử tải.
 
-Workflow `.github/workflows/build.yml` cung cấp các job Windows x64, macOS ARM64 và Intel. Cần đặt thư mục dự án làm gốc repository và chủ động chạy workflow; chưa có artifact Windows được phát hành.
+Workflow `.github/workflows/build.yml` tự chạy trên `main` và cung cấp job Windows x64, macOS ARM64 và Intel. Các ZIP được lưu dưới Actions artifacts, không đưa binary, cookie, video hay lịch sử tải vào git.
 
-Xem `BAO-CAO.md` để biết kết quả và giới hạn kiểm thử của lần bàn giao.
+Xem `BAO-CAO-0.2.md` cho lần cập nhật hiện tại. `BAO-CAO.md` giữ báo cáo lịch sử của bản 0.1.

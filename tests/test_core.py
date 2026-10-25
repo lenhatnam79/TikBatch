@@ -99,7 +99,7 @@ def test_lock_prevents_two_engines(tmp_path):
 
 
 def test_adaptive_obeys_limit_and_reduces_after_errors():
-    a = Adaptive(8)
+    a = Adaptive(8, initial=4)
     a.sample(100, True)
     assert a.limit == 5
     a.sample(100, True)

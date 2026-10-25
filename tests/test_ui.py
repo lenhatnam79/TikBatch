@@ -22,6 +22,8 @@ def result(**kw):
 
 
 def test_window_constructs_and_busy_controls(window):
+    assert window.background.isChecked()
+    assert window.maximum.maximum() == 32
     window.busy(True)
     assert not window.start.isEnabled() and window.pause.isEnabled()
     window.busy(False)

@@ -1,8 +1,8 @@
-.......................................                                  [100%]
+......................................................                   [100%]
 ============================= slowest 5 durations ==============================
-0.93s setup    tests/test_ui.py::test_window_constructs_and_busy_controls
-0.71s call     tests/test_engine.py::test_thousand_item_queue_resume_and_dedup
+0.79s call     tests/test_engine.py::test_thousand_item_queue_resume_and_dedup
 0.33s call     tests/test_engine.py::test_stop_preserves_pending_jobs
+0.27s setup    tests/test_ui.py::test_window_constructs_and_busy_controls
 0.21s call     tests/test_pipeline.py::test_pipeline_with_real_mp4_validation
-0.17s call     tests/test_engine.py::test_incomplete_scan_never_claims_completion
-39 passed in 7.10s
+0.18s call     tests/test_retry_policy.py::test_expired_url_refreshes_immediately_within_same_attempt
+54 passed in 3.22s
