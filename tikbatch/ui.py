@@ -98,7 +98,7 @@ class Window(QMainWindow):
         self.job = None
         self.closing = False
         self.folder = None
-        self.setWindowTitle("TikBatch 0.2.1 · Tải video theo kênh")
+        self.setWindowTitle("TikBatch 0.2.2 · Tải video theo kênh")
         self.resize(1100, 820)
         self.setMinimumSize(920, 760)
         container = QWidget()
@@ -193,7 +193,7 @@ class Window(QMainWindow):
         bottom = QHBoxLayout()
         self.install = QPushButton("Cài trình duyệt (lần đầu)")
         self.install.clicked.connect(lambda: self.launch("install"))
-        self.login = QPushButton("Mở TikTok / Đăng nhập")
+        self.login = QPushButton("Mở TikTok / Xác minh")
         self.login.clicked.connect(lambda: self.launch("login"))
         bottom.addWidget(self.install)
         bottom.addWidget(self.login)
@@ -288,6 +288,8 @@ class Window(QMainWindow):
             prefix = "Đã dừng, tiến độ được lưu" if data["stopped"] else "Đã kết thúc lượt chạy"
             if data.get("error_code") == "access_denied":
                 prefix = "Đã tạm dừng do Access Denied, hàng đợi được giữ lại"
+            if data.get("error_code") == "needs_captcha":
+                prefix = "Đã tạm dừng chờ bạn xác minh CAPTCHA, hàng đợi được giữ lại"
             scan = "nguồn báo hết danh sách" if data["scan"].startswith("source_end") else "CHƯA xác nhận hết kênh"
             message = f"{prefix}: {data['done']} đã lưu, {data['failed']} lỗi, {data['unsupported']} bài ảnh; {scan}."
             if data["error"]:

@@ -20,6 +20,10 @@ class NeedsLogin(SourceError):
     """Pause the run; never automatically open a visible browser."""
 
 
+class NeedsCaptcha(NeedsLogin):
+    pass
+
+
 class AccessDenied(SourceError):
     """The site refused access; logging in again is not an established remedy."""
 

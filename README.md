@@ -111,3 +111,16 @@ PyInstaller cần build trên chính hệ điều hành đích; macOS cần Xcod
 Workflow `.github/workflows/build.yml` tự chạy trên `main` và cung cấp job Windows x64, macOS ARM64 và Intel. Các ZIP được lưu dưới Actions artifacts, không đưa binary, cookie, video hay lịch sử tải vào git.
 
 Xem `BAO-CAO-0.2.md` cho lần cập nhật hiện tại. `BAO-CAO.md` giữ báo cáo lịch sử của bản 0.1.
+
+### 0.2.2 — Xác minh CAPTCHA thủ công
+
+Khi phát hiện CAPTCHA, TikBatch tạm dừng quét/tải và giữ hàng đợi. Bấm
+**Mở TikTok / Xác minh**, hoàn thành CAPTCHA trong cửa sổ trình duyệt,
+chờ trang dùng được, đóng cửa sổ rồi bấm **Bắt đầu / Tiếp tục**.
+Cửa sổ xác minh không tự đóng vì CAPTCHA và không tự giải hoặc tải lại thử thách.
+Phiên trình duyệt được lưu trên máy; TikTok vẫn có thể yêu cầu xác minh lại.
+Chế độ đăng nhập và tải dùng cùng hồ sơ, kênh Chromium và kích thước cửa sổ.
+
+Kiểm thử 0.2.2: 70 bài kiểm thử nội bộ đạt, gồm CAPTCHA khi quét/lấy thông tin,
+không mất hàng đợi, cửa sổ xác minh chờ thao tác và lưu phiên. Chưa xác nhận
+trực tiếp trên CAPTCHA thật trong phiên TikTok của người dùng.

@@ -10,7 +10,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .model import AccessDenied, Media, NeedsLogin, SourceError, Video, best_media, worker_command
+from .model import AccessDenied, Media, NeedsCaptcha, NeedsLogin, SourceError, Video, best_media, worker_command
 from .worker import options
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
@@ -402,12 +402,19 @@ class Source:
             return
         await self.check_access(page)
         needs_login = urlsplit(page.url).path.startswith("/login")
-        captcha = page.locator('[id="captcha-verify-container"], iframe[src*="captcha"]')
-        if await captcha.count() and await captcha.first.is_visible():
-            needs_login = True
+        if await self.has_captcha(page):
+            self._browser_failure = NeedsCaptcha("TikTok yêu cầu CAPTCHA. Đã tạm dừng và giữ hàng đợi. Bấm Mở TikTok / Xác minh, xử lý thủ công rồi đóng cửa sổ và bấm Bắt đầu / Tiếp tục.")
+            raise self._browser_failure
         if needs_login:
             self._browser_failure = NeedsLogin("TikTok yêu cầu đăng nhập/xác minh. Đã tạm dừng; bấm Mở TikTok / Đăng nhập rồi tiếp tục.")
             raise self._browser_failure
+
+    async def has_captcha(self, page):
+        captcha = page.locator('[id="captcha-verify-container"], iframe[src*="captcha"], [id="verify-center"], [class*="captcha-verify-container"]')
+        for index in range(await captcha.count()):
+            if await captcha.nth(index).is_visible():
+                return True
+        return False
 
     async def check_access(self, page, status=None):
         if self._browser_failure:
@@ -423,7 +430,7 @@ class Source:
             self._browser_failure = denial
             raise denial
 
-    async def navigate(self, page, url, timeout=20000):
+    async def navigate(self, page, url, timeout=20000, *, manual=False):
         from playwright.async_api import Error as BrowserError
         if self._browser_failure:
             raise self._browser_failure
@@ -436,7 +443,8 @@ class Source:
             label = code[0] if code else type(e).__name__
             raise SourceError(f"Không tải được trang TikTok ({label}); kiểm tra truy cập bằng trình duyệt thông thường.") from e
         await self.check_access(page, response.status if response else None)
-        await self.check_auth(page)
+        if not manual:
+            await self.check_auth(page)
         return response
 
     async def resolve_browser(self, url):
@@ -554,16 +562,29 @@ async def browser_login(root: Path, url: str, emit, stop=None):
     source = Source(root, emit)
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(str(root / "browser"),
-            headless=False, viewport={"width": 1280, "height": 900})
+            headless=False, channel="chromium", viewport={"width": 1440, "height": 960})
         try:
-            page = await context.new_page()
-            await source.navigate(page, url, timeout=45000)
+            page = context.pages[0] if context.pages else await context.new_page()
+            await source.navigate(page, url, timeout=45000, manual=True)
             emit("log", "Bạn có thể đăng nhập/xác minh trong cửa sổ TikTok. Đóng cửa sổ khi xong.")
+            awaiting_captcha = False
             while context.pages and not (stop and stop.is_set()):
                 try:
+                    page = context.pages[0]
+                    await source.check_access(page)
+                    captcha = await source.has_captcha(page)
+                    if captcha and not awaiting_captcha:
+                        emit("log", "Đang chờ bạn xử lý CAPTCHA thủ công trong trình duyệt. Tool không tự giải hoặc tải lại trang.")
+                    elif awaiting_captcha and not captcha:
+                        emit("log", "Không còn thấy CAPTCHA. Nếu trang đã dùng được, đóng cửa sổ TikTok rồi bấm Bắt đầu / Tiếp tục.")
+                    awaiting_captcha = captcha
                     await source.save_cookies(context)
                     await asyncio.sleep(1)
+                except AccessDenied:
+                    raise
                 except Exception:
+                    if context.pages and not (stop and stop.is_set()):
+                        raise SourceError("Không đọc được cửa sổ xác minh. Đóng cửa sổ rồi mở lại; hàng đợi vẫn được giữ.")
                     break
         finally:
             await context.close()

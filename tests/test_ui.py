@@ -60,3 +60,9 @@ def test_login_denial_preserves_specific_error(window, monkeypatch):
     job.event.connect(lambda kind, data: events.append((kind, data)))
     job.run()
     assert events == [("error", "TikTok từ chối truy cập (Access Denied).")]
+
+
+def test_captcha_pause_is_visible(window):
+    window.handle_event('finished', result(pending=8, error_code='needs_captcha', error='CAPTCHA'))
+    assert 'chờ bạn xác minh CAPTCHA' in window.status.text()
+    assert 'hàng đợi được giữ lại' in window.status.text()

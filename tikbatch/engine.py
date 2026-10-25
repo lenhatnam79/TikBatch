@@ -12,7 +12,7 @@ from dataclasses import replace
 import httpx
 
 from .download import Downloader
-from .model import AccessDenied, DiskFull, ExpiredSource, NeedsLogin, SourceError, Throttled, Video, profile_url
+from .model import AccessDenied, DiskFull, ExpiredSource, NeedsCaptcha, NeedsLogin, SourceError, Throttled, Video, profile_url
 from .sources import Source
 from .store import Store
 from .locking import FileLock
@@ -94,7 +94,7 @@ class Engine:
                 self.emit("log", scan_error)
                 if isinstance(e, (NeedsLogin, AccessDenied)):
                     fatal = scan_error
-                    error_code = "access_denied" if isinstance(e, AccessDenied) else "needs_login"
+                    error_code = "access_denied" if isinstance(e, AccessDenied) else "needs_captcha" if isinstance(e, NeedsCaptcha) else "needs_login"
             finally:
                 scan_done = True
         def on_bytes(n):
@@ -142,7 +142,7 @@ class Engine:
                     except (NeedsLogin, AccessDenied) as e:
                         store.reset(row["id"])
                         fatal = str(e)
-                        error_code = "access_denied" if isinstance(e, AccessDenied) else "needs_login"
+                        error_code = "access_denied" if isinstance(e, AccessDenied) else "needs_captcha" if isinstance(e, NeedsCaptcha) else "needs_login"
                     except Exception as e:
                         code = "source"
                         if isinstance(e, Throttled):
